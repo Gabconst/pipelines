@@ -1,0 +1,103 @@
+name: Grafana`s Deployer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  terraform-ansible:
+    runs-on: ubuntu-latest
+    env:
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+    steps:
+      # --- Checkout do repositório atual (pipelines) ---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- Clonar o módulo pai (Terraform) ---
+      - name: Clonar módulo pai
+        run: git clone https://github.com/Gabconst/module-f.git module-pai
+
+      # --- Clonar o repositório do Ansible (módulo filho + pasta automation) ---
+      - name: Clonar repositório GRAFANA-IAC
+        run: git clone https://github.com/Gabconst/GRAFANA-IAC.git grafana-iac
+
+      # --- Configurar credenciais AWS ---
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # --- Setup Terraform ---
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.7
+
+      # --- Terraform Init ---
+      - name: Terraform Init
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/module-pai/.terraform"
+          rm -f "$GITHUB_WORKSPACE/module-pai/.terraform.lock.hcl"
+          terraform -chdir="$GITHUB_WORKSPACE/module-pai" init -upgrade
+
+      # --- Terraform Plan ---
+      - name: Terraform Plan
+        run: terraform -chdir="$GITHUB_WORKSPACE/module-pai" plan
+
+      # --- Terraform Apply ---
+      - name: Terraform Apply
+        run: terraform -chdir="$GITHUB_WORKSPACE/module-pai" apply -auto-approve
+
+      # --- Configurar chave SSH do GitHub Secret ---
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEVOPS_PDI_PEM }}" > ~/.ssh/devops-pdi.pem
+          chmod 600 ~/.ssh/devops-pdi.pem
+
+      # --- Instalar Ansible e dependências ---
+      - name: Install Ansible & Dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ansible python3-boto3 unzip jq
+
+      # --- Rodar Ansible Playbook (do repositório GRAFANA-IAC) ---
+      - name: Run Ansible Playbook
+        run: |
+          PLAYBOOK_DIR="$GITHUB_WORKSPACE/grafana-iac/automation"
+          TF_DIR="$GITHUB_WORKSPACE/module-pai"
+
+          # Retry para pegar IP da instância e garantir SSH
+          for i in {1..12}; do
+            TF_STATE_IP=$(terraform -chdir="$TF_DIR" output -raw instance_ip 2>/dev/null)
+            if [ -n "$TF_STATE_IP" ]; then
+              if ssh -o StrictHostKeyChecking=no -i ~/.ssh/devops-pdi.pem ubuntu@$TF_STATE_IP "echo ok" 2>/dev/null; then
+                echo "SSH disponível!"
+                break
+              fi
+            fi
+            echo "Instância ainda não pronta, aguardando 10s..."
+            sleep 10
+          done
+
+          if [ -z "$TF_STATE_IP" ]; then
+            echo "Erro: Não foi possível obter o IP da instância EC2."
+            exit 1
+          fi
+
+          # Criar inventory para Ansible
+          cat > "$PLAYBOOK_DIR/inventory.ini" <<EOF
+          [grafana-servers]
+          $TF_STATE_IP ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/devops-pdi.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          EOF
+
+          # Vault
+          echo -n "${{ secrets.ANSIBLE_VAULT_PASS }}" > ~/.vault_pass.txt
+
+          # Rodar playbook
+          ansible-playbook -i "$PLAYBOOK_DIR/inventory.ini" "$PLAYBOOK_DIR/playbook.yml" --vault-password-file ~/.vault_pass.txt -vvv
