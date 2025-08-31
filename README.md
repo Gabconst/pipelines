@@ -12,26 +12,26 @@ IAC/
 ├── .ansible
 ├── .vscode
 ├── lab/
-│ ├── .ansible
-│ ├── automation/
-│ │ ├── group_vars/
-│ │ ├── inventory.sh
-│ │ └── playbook.yml
-│ ├── compute/
-│ │ ├── .terraform/
-│ │ ├── main.tf
-│ │ ├── outputs.tf
-│ │ ├── providers.tf
-│ │ ├── variables.tf
-│ │ ├── terraform.tfstate
-│ │ └── terraform.tfstate.backup
-│ └── devops-pdi.pem
+│   ├── .ansible
+│   ├── automation/
+│   │   ├── group_vars/
+│   │   ├── inventory.sh
+│   │   └── playbook.yml
+│   ├── compute/
+│   │   ├── .terraform/
+│   │   ├── main.tf
+│   │   ├── outputs.tf
+│   │   ├── providers.tf
+│   │   ├── variables.tf
+│   │   ├── terraform.tfstate
+│   │   └── terraform.tfstate.backup
+│   └── devops-pdi.pem
 ├── module-f/
-│ └── main.tf
+│   └── main.tf
 └── pipelines/
-└── .github/
-└── workflows/
-└── grafana-pipeline-deploy.yml
+    └── .github/
+        └── workflows/
+            └── grafana-pipeline-deploy.yml
 
 
 ## Descrição dos Diretórios
