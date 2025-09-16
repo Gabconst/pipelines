@@ -11,16 +11,22 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+
     steps:
+
+      # --- 1️⃣ Checkout do repositório atual ---
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # --- 2️⃣ Clona módulo pai para Terraform ---
       - name: Clonar módulo pai
         run: git clone https://github.com/Gabconst/module-f.git module-pai
 
+      # --- 3️⃣ Clona repositório GRAFANA-IAC, que contém o playbook e arquivos ---
       - name: Clonar repositório GRAFANA-IAC
         run: git clone https://github.com/Gabconst/GRAFANA-IAC.git grafana-iac
 
+      # --- 4️⃣ Configura credenciais AWS ---
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -28,39 +34,48 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # --- 5️⃣ Setup Terraform ---
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.7
 
+      # --- 6️⃣ Terraform Init (garante que módulos antigos sejam removidos) ---
       - name: Terraform Init
         run: |
           rm -rf "$GITHUB_WORKSPACE/module-pai/.terraform"
           rm -f "$GITHUB_WORKSPACE/module-pai/.terraform.lock.hcl"
           terraform -chdir="$GITHUB_WORKSPACE/module-pai" init -upgrade
 
+      # --- 7️⃣ Terraform Plan ---
       - name: Terraform Plan
         run: terraform -chdir="$GITHUB_WORKSPACE/module-pai" plan
 
+      # --- 8️⃣ Terraform Apply ---
       - name: Terraform Apply
         run: terraform -chdir="$GITHUB_WORKSPACE/module-pai" apply -auto-approve
 
+      # --- 9️⃣ Setup SSH Key para acessar a instância EC2 criada pelo Terraform ---
       - name: Setup SSH Key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.DEVOPS_PDI_PEM }}" > ~/.ssh/devops-pdi.pem
           chmod 600 ~/.ssh/devops-pdi.pem
 
+      # --- 🔟 Instala Ansible e dependências necessárias ---
       - name: Install Ansible & Dependencies
         run: |
           sudo apt-get update -y
           sudo apt-get install -y ansible python3-boto3 unzip jq
 
+      # --- 1️⃣1️⃣ Executa o Playbook Ansible ---
       - name: Run Ansible Playbook
         run: |
+          # Define diretórios
           PLAYBOOK_DIR="$GITHUB_WORKSPACE/grafana-iac/automation-k8s"
           TF_DIR="$GITHUB_WORKSPACE/module-pai"
 
+          # Aguarda IP da instância EC2 ser disponibilizado pelo Terraform
           for i in {1..12}; do
             TF_STATE_IP=$(terraform -chdir="$TF_DIR" output -raw instance_ip 2>/dev/null)
             if [ -n "$TF_STATE_IP" ]; then
@@ -78,11 +93,14 @@ jobs:
             exit 1
           fi
 
+          # Cria inventário dinâmico para Ansible
           cat > "$PLAYBOOK_DIR/inventory.ini" <<EOF
           [grafana-servers]
           $TF_STATE_IP ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/devops-pdi.pem ansible_ssh_common_args='-o StrictHostKeyChecking=no'
           EOF
-                    
+                              
+          # Salva senha do Ansible Vault
           echo -n "${{ secrets.ANSIBLE_VAULT_PASS }}" > ~/.vault_pass.txt
           
+          # Executa playbook Ansible (vai instalar Minikube, Docker, NGINX e aplicar K8s manifests)
           ansible-playbook -i "$PLAYBOOK_DIR/inventory.ini" "$PLAYBOOK_DIR/playbook.yml" --vault-password-file ~/.vault_pass.txt -vvv
