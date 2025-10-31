@@ -1,4 +1,4 @@
-name: Minikube Deploy's
+name: Minikube Deploy's GitOps
 
 on:
   workflow_dispatch:
